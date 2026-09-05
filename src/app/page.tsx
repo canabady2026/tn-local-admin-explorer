@@ -6,18 +6,20 @@ import { DbStatusBadge } from "@/components/DbStatusBadge";
 import { FilterPanel } from "@/components/FilterPanel";
 import { FilterSummary } from "@/components/FilterSummary";
 import { FontControls } from "@/components/FontControls";
+import { FullPageVillageMap } from "@/components/FullPageVillageMap";
 import { KpiCards } from "@/components/KpiCards";
 import { Pagination } from "@/components/Pagination";
 import { VillageDetailDrawer } from "@/components/VillageDetailDrawer";
 import { VillagesTable } from "@/components/VillagesTable";
 import { filtersForLocation } from "@/lib/filters";
+import { parseRoute } from "@/lib/mapLinks";
 import { getOverallStats, queryVillages } from "@/lib/sqlite";
 import { EMPTY_FILTERS, type VillagesFilters } from "@/lib/types";
 import { useDebounced } from "@/lib/useDebounced";
 
 const DEFAULT_LIMIT = 25;
 
-export default function Home() {
+function Dashboard() {
   const [filters, setFilters] = useState<VillagesFilters>(EMPTY_FILTERS);
   const debouncedFilters = useDebounced(filters, 350);
 
@@ -106,4 +108,16 @@ export default function Home() {
       />
     </div>
   );
+}
+
+export default function Home() {
+  // The full-page map view is opened as a plain URL (new tab), so the
+  // route is whatever's in the query string on first load -- read via SWR
+  // (client-only, never during the static prerender pass) rather than an
+  // effect that would call setState directly.
+  const { data: route } = useSWR("route", () => parseRoute(window.location.search));
+
+  if (!route) return null;
+  if (route.mode === "village-map") return <FullPageVillageMap villageId={route.villageId} />;
+  return <Dashboard />;
 }

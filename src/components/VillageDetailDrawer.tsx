@@ -3,6 +3,7 @@
 import useSWR from "swr";
 import { LocationBadge } from "@/components/LocationBadge";
 import { VillageMap } from "@/components/VillageMap";
+import { buildVillageMapUrl } from "@/lib/mapLinks";
 import { getVillageDetail } from "@/lib/sqlite";
 import type { LocationSelection } from "@/lib/types";
 
@@ -65,7 +66,17 @@ export function VillageDetailDrawer({ villageId, onClose, onNavigateToLocation }
               />
             </div>
 
-            <h3 className="mb-2 text-sm font-semibold text-slate-900">Map</h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-900">Map</h3>
+              <a
+                href={buildVillageMapUrl(villageId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 underline decoration-dotted hover:text-blue-800"
+              >
+                Open in full window ↗
+              </a>
+            </div>
             <div className="mb-5">
               <VillageMap
                 villageEn={detail.village.village_en}

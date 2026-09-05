@@ -12,11 +12,13 @@ interface Props {
   districtEn: string;
   /** Pre-resolved location from the habitation shapefile, if any -- skips the Nominatim lookup entirely when present. */
   geo: VillageGeo | null;
+  fullHeight?: boolean;
 }
 
-export function VillageMap({ villageEn, districtEn, geo }: Props) {
+export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
+  const heightClass = fullHeight ? "h-full" : "h-56";
 
   // Only fall back to geocoding by name when the shapefile-derived
   // location isn't available -- disabling the SWR key (null) when `geo`
@@ -47,7 +49,10 @@ export function VillageMap({ villageEn, districtEn, geo }: Props) {
       const L = (await import("leaflet")).default;
       if (disposed || !containerRef.current) return;
 
-      const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView([resolved.lat, resolved.lon], 14);
+      const map = L.map(containerRef.current, { scrollWheelZoom: fullHeight }).setView(
+        [resolved.lat, resolved.lon],
+        14
+      );
       mapRef.current = map;
 
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -63,16 +68,18 @@ export function VillageMap({ villageEn, districtEn, geo }: Props) {
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [resolved]);
+  }, [resolved, fullHeight]);
 
   if (geo) {
     // Resolved from the bundled shapefile -- no loading/error state to show.
-    return <div ref={containerRef} className="h-56 w-full rounded-lg border border-slate-200" />;
+    return <div ref={containerRef} className={`${heightClass} w-full rounded-lg border border-slate-200`} />;
   }
 
   if (isLoading) {
     return (
-      <div className="flex h-56 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-400">
+      <div
+        className={`flex ${heightClass} items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-400`}
+      >
         Looking up this village…
       </div>
     );
@@ -95,5 +102,5 @@ export function VillageMap({ villageEn, districtEn, geo }: Props) {
     );
   }
 
-  return <div ref={containerRef} className="h-56 w-full rounded-lg border border-slate-200" />;
+  return <div ref={containerRef} className={`${heightClass} w-full rounded-lg border border-slate-200`} />;
 }
