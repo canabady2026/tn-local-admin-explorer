@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import { LocationBadge } from "@/components/LocationBadge";
+import { VillageMap } from "@/components/VillageMap";
 import { getVillageDetail } from "@/lib/sqlite";
 import type { LocationSelection } from "@/lib/types";
 
@@ -62,6 +63,11 @@ export function VillageDetailDrawer({ villageId, onClose, onNavigateToLocation }
                 value={detail.village.taluk_en}
                 onClick={() => navigate({ district: detail.village.district_en, taluk: detail.village.taluk_en })}
               />
+            </div>
+
+            <h3 className="mb-2 text-sm font-semibold text-slate-900">Map</h3>
+            <div className="mb-5">
+              <VillageMap villageEn={detail.village.village_en} districtEn={detail.village.district_en} />
             </div>
 
             <h3 className="mb-2 text-sm font-semibold text-slate-900">

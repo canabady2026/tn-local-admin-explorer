@@ -49,7 +49,7 @@ Source: `~/dev/tn-local-administration/tndb2021.db`. Four real tables:
 |---|---|---|
 | `district` | 38 | `dcode`, `name_en`, `name_ta`, `taluk_count`, `status` |
 | `taluk` | 298 | `dcode`+`tcode` unique per district; `name_en`, `name_ta` |
-| `village` | 17,738 | `dcode`+`tcode`+`vcode` unique; `latitude`/`longitude` columns exist but are **null for every row** in this dataset -- no map view is possible here, unlike the highways app |
+| `village` | 17,738 | `dcode`+`tcode`+`vcode` unique; `latitude`/`longitude` columns exist but are **null for every row** in this dataset -- the map in the detail drawer geocodes by name at view time instead (see below) |
 | `habitation` | 80,359 | Rural drinking-water coverage records (circa 2012), keyed by **free-text** `district_name`/`block_name`/`panchayat_name`/`village_name`/`habitation_name` -- no foreign key to `village` |
 | `speciality` | 12 | Notable people, properly linked via `village_id` -- very sparse (only "cinema_personality" entries currently) |
 
@@ -64,6 +64,18 @@ panchayat name rather than the finer revenue-village unit `village.name_en`
 represents). An expression index
 (`idx_habitation_lookup` on `LOWER(district_name), LOWER(village_name)`)
 keeps that lookup fast despite the free-text join.
+
+**The village map geocodes by name, live, on open.** With no coordinates
+in the source data, `src/lib/osmVillage.ts` looks up
+`<village>, <district> District, Tamil Nadu, India` against Nominatim
+(`featureType=settlement`) each time a village's detail drawer opens, and
+only accepts a result if its `class` is `place` *and* the target
+district's name appears in the result's `display_name` -- villages are
+numerous enough that same-named places recur across districts, and a bare
+name search without that check can resolve to an unrelated place, or even
+a road with a similar name, in the wrong district entirely. Verified
+against real villages: roughly 4 in 5 resolve to a usable marker; the rest
+show "not mapped in OpenStreetMap yet" rather than guessing.
 
 ## Local development
 
