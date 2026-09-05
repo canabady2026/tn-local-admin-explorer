@@ -59,7 +59,14 @@ async function loadDb(): Promise<Database> {
   if (!dbPromise) {
     dbPromise = (async () => {
       const SQL = await initSqlJs({ locateFile: () => withBasePath("/sql.js/sql-wasm.wasm") });
-      const res = await fetch(withBasePath("/data/tndb2021.db"));
+      // The version query param is a content hash computed at build time
+      // (next.config.ts) -- it changes whenever the db's content changes,
+      // which busts any HTTP/browser cache still holding a previous
+      // deploy's file under this same stable filename. Without it, a
+      // browser that loaded the page shortly before a deploy could keep
+      // querying a stale db against a JS bundle built for the new schema.
+      const dbUrl = withBasePath(`/data/tndb2021.db?v=${process.env.NEXT_PUBLIC_DB_VERSION || "0"}`);
+      const res = await fetch(dbUrl);
       if (!res.ok) throw new Error(`failed to fetch bundled database: ${res.status}`);
       const buf = await res.arrayBuffer();
       return new SQL.Database(new Uint8Array(buf));
