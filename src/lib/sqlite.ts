@@ -227,7 +227,7 @@ function findVillageGeoDirect(db: Database, village: VillageRow): VillageGeo | n
     "SELECT lat, lon, vill_name FROM village_geo WHERE dcode = ? AND tcode = ? AND vcode = ?",
     [village.dcode, village.tcode, village.vcode]
   );
-  return hit ? { lat: hit.lat, lon: hit.lon, label: `${village.village_en} (village boundary centroid)` } : null;
+  return hit ? { lat: hit.lat, lon: hit.lon, label: "Village boundary centroid" } : null;
 }
 
 /**

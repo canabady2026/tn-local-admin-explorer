@@ -35,8 +35,8 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
   );
 
   const resolved = useMemo(() => {
-    if (geo) return { lat: geo.lat, lon: geo.lon, label: geo.label };
-    if (fallback) return { lat: fallback.lat, lon: fallback.lon, label: fallback.displayName };
+    if (geo) return { lat: geo.lat, lon: geo.lon, description: geo.label };
+    if (fallback) return { lat: fallback.lat, lon: fallback.lon, description: fallback.displayName };
     return null;
   }, [geo, fallback]);
 
@@ -77,7 +77,14 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
         maxZoom: 18,
       }).addTo(map);
 
-      L.marker([resolved.lat, resolved.lon]).addTo(map).bindPopup(resolved.label);
+      // Leaflet's popup content is rendered as HTML, not plain text, so
+      // the village name has to be escaped before wrapping it in <b> --
+      // otherwise a name containing "&"/"<"/">" would break the markup.
+      const escapeHtml = (text: string) =>
+        text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const popupHtml = `<b>${escapeHtml(villageEn)}</b><br>${escapeHtml(resolved.description)}`;
+
+      L.marker([resolved.lat, resolved.lon]).addTo(map).bindPopup(popupHtml);
     })();
 
     return () => {
@@ -85,7 +92,7 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [resolved, fullHeight]);
+  }, [resolved, fullHeight, villageEn]);
 
   if (geo) {
     // Resolved from the bundled shapefile -- no loading/error state to show.
