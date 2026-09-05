@@ -77,10 +77,19 @@ export interface NotablePerson {
   link: string;
 }
 
+export interface VillageGeo {
+  lat: number;
+  lon: number;
+  /** Which matched habitation this location came from, for attribution in the UI. */
+  label: string;
+}
+
 export interface VillageDetail {
   village: VillageRow;
   habitations: Habitation[];
   notablePeople: NotablePerson[];
+  /** Approximated from a matched habitation's real coordinates, or null if none resolved. */
+  geo: VillageGeo | null;
 }
 
 export interface FilteredSummary {

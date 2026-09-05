@@ -8,10 +8,50 @@ import type {
   OverallStats,
   Taluk,
   VillageDetail,
+  VillageGeo,
   VillageRow,
   VillagesFilters,
   VillagesResult,
 } from "./types";
+
+/**
+ * habitation.district_name spellings that don't exactly match
+ * district.name_en (found by diffing all 31 distinct habitation.district_name
+ * values against district.name_en -- everything else matches exactly).
+ * Applying this closes real gaps in the village<->habitation join, not
+ * just the geo lookup below: verified 3,326 -> 4,287 villages (+29%) get a
+ * habitation match once it's applied.
+ */
+const DISTRICT_ALIASES: Record<string, string> = {
+  kanchipuram: "Kancheepuram",
+  nilgiris: "The Nilgiris",
+  thoothukudi: "Thoothukkudi",
+  tiruvallur: "Thiruvallur",
+  tiruvarur: "Thiruvarur",
+  villupuram: "Viluppuram",
+};
+
+const DISTRICT_ALIAS_CASE_SQL =
+  "CASE LOWER(district_name) " +
+  Object.entries(DISTRICT_ALIASES)
+    .map(([from, to]) => `WHEN '${from}' THEN '${to}'`)
+    .join(" ") +
+  " ELSE district_name END";
+
+/**
+ * The habitation geo dataset (Habitation_Tamilnadu shapefile) predates
+ * Tamil Nadu's 2019/2020 district splits, so these six newer districts
+ * have no habitation_geo.district_en of their own -- their habitations
+ * are filed under the pre-split parent district instead.
+ */
+const PARENT_DISTRICT: Record<string, string> = {
+  Chengalpattu: "Kancheepuram",
+  Kallakurichi: "Viluppuram",
+  Ranipet: "Vellore",
+  Thirupathur: "Vellore",
+  Tenkasi: "Tirunelveli",
+  Mayiladuturai: "Nagapattinam",
+};
 
 let dbPromise: Promise<Database> | null = null;
 
@@ -154,12 +194,36 @@ export async function getVillageDetail(villageId: number): Promise<VillageDetail
     `SELECT habitation_name, village_name, panchayat_name, block_name, district_name,
             scCurrentPopulation, stCurrentPopulation, generalCurrentPopulation, status, as_on_date
      FROM habitation
-     WHERE LOWER(village_name) = LOWER(?) AND LOWER(district_name) = LOWER(?)
+     WHERE LOWER(village_name) = LOWER(?) AND LOWER(${DISTRICT_ALIAS_CASE_SQL}) = LOWER(?)
      ORDER BY habitation_name`,
     [village.village_en, village.district_en]
   );
 
-  return { village, habitations, notablePeople };
+  const geo = findVillageGeo(db, habitations, village.district_en);
+
+  return { village, habitations, notablePeople, geo };
+}
+
+/**
+ * Approximates a village's location from its matched habitations' real
+ * coordinates (Habitation_Tamilnadu shapefile), tried in order until one
+ * resolves -- district_en must match (via the pre-split parent for the six
+ * newer districts) to reject a same-named habitation elsewhere in Tamil
+ * Nadu, since habitation names are not unique statewide. Returns null if
+ * no habitation matched to this village also has shapefile coordinates in
+ * the right district; the caller falls back to geocoding by name instead.
+ */
+function findVillageGeo(db: Database, habitations: Habitation[], districtEn: string): VillageGeo | null {
+  const targetDistrict = PARENT_DISTRICT[districtEn] ?? districtEn;
+  for (const hab of habitations) {
+    const [hit] = rowsOf<{ lat: number; lon: number; hab_name: string }>(
+      db,
+      "SELECT lat, lon, hab_name FROM habitation_geo WHERE LOWER(hab_name) = LOWER(?) AND district_en = ? LIMIT 1",
+      [hab.habitation_name, targetDistrict]
+    );
+    if (hit) return { lat: hit.lat, lon: hit.lon, label: hit.hab_name };
+  }
+  return null;
 }
 
 export async function getDistricts(): Promise<District[]> {

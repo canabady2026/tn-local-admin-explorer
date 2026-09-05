@@ -1,26 +1,45 @@
 "use client";
 
 import type { Map as LeafletMap } from "leaflet";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import "leaflet/dist/leaflet.css";
 import { GeocodeUnavailableError, geocodeVillage } from "@/lib/osmVillage";
+import type { VillageGeo } from "@/lib/types";
 
-export function VillageMap({ villageEn, districtEn }: { villageEn: string; districtEn: string }) {
+interface Props {
+  villageEn: string;
+  districtEn: string;
+  /** Pre-resolved location from the habitation shapefile, if any -- skips the Nominatim lookup entirely when present. */
+  geo: VillageGeo | null;
+}
+
+export function VillageMap({ villageEn, districtEn, geo }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
 
+  // Only fall back to geocoding by name when the shapefile-derived
+  // location isn't available -- disabling the SWR key (null) when `geo`
+  // is present means no Nominatim request is made at all in that case.
   const {
-    data: geo,
+    data: fallback,
     isLoading,
     error,
-  } = useSWR(["village-geocode", villageEn, districtEn] as const, () => geocodeVillage(villageEn, districtEn));
+  } = useSWR(!geo ? (["village-geocode", villageEn, districtEn] as const) : null, () =>
+    geocodeVillage(villageEn, districtEn)
+  );
+
+  const resolved = useMemo(() => {
+    if (geo) return { lat: geo.lat, lon: geo.lon, label: `Approximate location, from the habitation "${geo.label}"` };
+    if (fallback) return { lat: fallback.lat, lon: fallback.lon, label: fallback.displayName };
+    return null;
+  }, [geo, fallback]);
 
   // Imperative Leaflet lifecycle, kept separate from data fetching (SWR
   // above) so this effect never calls setState -- it only ever creates or
   // tears down the map instance held in mapRef.
   useEffect(() => {
-    if (!geo || !containerRef.current) return;
+    if (!resolved || !containerRef.current) return;
 
     let disposed = false;
 
@@ -28,7 +47,7 @@ export function VillageMap({ villageEn, districtEn }: { villageEn: string; distr
       const L = (await import("leaflet")).default;
       if (disposed || !containerRef.current) return;
 
-      const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView([geo.lat, geo.lon], 14);
+      const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView([resolved.lat, resolved.lon], 14);
       mapRef.current = map;
 
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -36,7 +55,7 @@ export function VillageMap({ villageEn, districtEn }: { villageEn: string; distr
         maxZoom: 18,
       }).addTo(map);
 
-      L.marker([geo.lat, geo.lon]).addTo(map).bindPopup(geo.displayName);
+      L.marker([resolved.lat, resolved.lon]).addTo(map).bindPopup(resolved.label);
     })();
 
     return () => {
@@ -44,7 +63,12 @@ export function VillageMap({ villageEn, districtEn }: { villageEn: string; distr
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [geo]);
+  }, [resolved]);
+
+  if (geo) {
+    // Resolved from the bundled shapefile -- no loading/error state to show.
+    return <div ref={containerRef} className="h-56 w-full rounded-lg border border-slate-200" />;
+  }
 
   if (isLoading) {
     return (
@@ -63,8 +87,12 @@ export function VillageMap({ villageEn, districtEn }: { villageEn: string; distr
     );
   }
 
-  if (!geo) {
-    return <p className="text-sm text-slate-500">This village isn&apos;t mapped as a distinct place in OpenStreetMap yet.</p>;
+  if (!resolved) {
+    return (
+      <p className="text-sm text-slate-500">
+        No location data found for this village, in the bundled habitation data or OpenStreetMap.
+      </p>
+    );
   }
 
   return <div ref={containerRef} className="h-56 w-full rounded-lg border border-slate-200" />;

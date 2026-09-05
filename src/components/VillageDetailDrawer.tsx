@@ -67,7 +67,11 @@ export function VillageDetailDrawer({ villageId, onClose, onNavigateToLocation }
 
             <h3 className="mb-2 text-sm font-semibold text-slate-900">Map</h3>
             <div className="mb-5">
-              <VillageMap villageEn={detail.village.village_en} districtEn={detail.village.district_en} />
+              <VillageMap
+                villageEn={detail.village.village_en}
+                districtEn={detail.village.district_en}
+                geo={detail.geo}
+              />
             </div>
 
             <h3 className="mb-2 text-sm font-semibold text-slate-900">
