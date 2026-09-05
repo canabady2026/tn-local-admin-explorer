@@ -4,8 +4,11 @@ import type { Map as LeafletMap } from "leaflet";
 import { useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import "leaflet/dist/leaflet.css";
+import { withBasePath } from "@/lib/basePath";
 import { GeocodeUnavailableError, geocodeVillage } from "@/lib/osmVillage";
 import type { VillageGeo } from "@/lib/types";
+
+let iconsConfigured = false;
 
 interface Props {
   villageEn: string;
@@ -32,7 +35,7 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
   );
 
   const resolved = useMemo(() => {
-    if (geo) return { lat: geo.lat, lon: geo.lon, label: `Approximate location, from the habitation "${geo.label}"` };
+    if (geo) return { lat: geo.lat, lon: geo.lon, label: geo.label };
     if (fallback) return { lat: fallback.lat, lon: fallback.lon, label: fallback.displayName };
     return null;
   }, [geo, fallback]);
@@ -48,6 +51,20 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
     (async () => {
       const L = (await import("leaflet")).default;
       if (disposed || !containerRef.current) return;
+
+      // Leaflet's default marker icon is referenced via relative URLs
+      // baked into its own JS at build time, which don't resolve once
+      // bundled by webpack -- the icon (and its shadow) silently fail to
+      // load. Pointing it at our own copies (public/leaflet/, alongside
+      // the wasm/db assets) fixes it; only needs doing once per session.
+      if (!iconsConfigured) {
+        L.Icon.Default.mergeOptions({
+          iconUrl: withBasePath("/leaflet/marker-icon.png"),
+          iconRetinaUrl: withBasePath("/leaflet/marker-icon-2x.png"),
+          shadowUrl: withBasePath("/leaflet/marker-shadow.png"),
+        });
+        iconsConfigured = true;
+      }
 
       const map = L.map(containerRef.current, { scrollWheelZoom: fullHeight }).setView(
         [resolved.lat, resolved.lon],
@@ -97,7 +114,7 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
   if (!resolved) {
     return (
       <p className="text-sm text-slate-500">
-        No location data found for this village, in the bundled habitation data or OpenStreetMap.
+        No location data found for this village, in the bundled village/habitation boundaries or OpenStreetMap.
       </p>
     );
   }

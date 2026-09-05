@@ -84,7 +84,7 @@ function rowsOf<T>(db: Database, sql: string, params: SqlValue[] = []): T[] {
 }
 
 const VILLAGE_SELECT = `
-  SELECT v.id AS village_id, v.vcode AS vcode,
+  SELECT v.id AS village_id, v.dcode AS dcode, v.tcode AS tcode, v.vcode AS vcode,
          d.name_en AS district_en, d.name_ta AS district_ta,
          t.name_en AS taluk_en, t.name_ta AS taluk_ta,
          v.name_en AS village_en, v.name_ta AS village_ta
@@ -199,21 +199,41 @@ export async function getVillageDetail(villageId: number): Promise<VillageDetail
     [village.village_en, village.district_en]
   );
 
-  const geo = findVillageGeo(db, habitations, village.district_en);
+  const geo = findVillageGeoDirect(db, village) ?? findHabitationGeo(db, habitations, village.district_en);
 
   return { village, habitations, notablePeople, geo };
 }
 
 /**
- * Approximates a village's location from its matched habitations' real
- * coordinates (Habitation_Tamilnadu shapefile), tried in order until one
- * resolves -- district_en must match (via the pre-split parent for the six
- * newer districts) to reject a same-named habitation elsewhere in Tamil
- * Nadu, since habitation names are not unique statewide. Returns null if
- * no habitation matched to this village also has shapefile coordinates in
- * the right district; the caller falls back to geocoding by name instead.
+ * A village's real polygon centroid from the revenue_village.kml shapefile
+ * (loaded into village_geo by scripts/build_bundled_db.py), matched
+ * directly by (dcode, tcode, vcode) -- verified these match our own
+ * village table's codes exactly. This is the highest-confidence source:
+ * a real boundary centroid for this exact village, not a name-based
+ * guess. Verified coverage: 96.2% of all villages (17,056/17,738). The
+ * residual gap is mostly urbanized ex-villages the shapefile files under
+ * a Corporation/Municipality boundary instead of a Village polygon.
  */
-function findVillageGeo(db: Database, habitations: Habitation[], districtEn: string): VillageGeo | null {
+function findVillageGeoDirect(db: Database, village: VillageRow): VillageGeo | null {
+  const [hit] = rowsOf<{ lat: number; lon: number; vill_name: string }>(
+    db,
+    "SELECT lat, lon, vill_name FROM village_geo WHERE dcode = ? AND tcode = ? AND vcode = ?",
+    [village.dcode, village.tcode, village.vcode]
+  );
+  return hit ? { lat: hit.lat, lon: hit.lon, label: `${village.village_en} (village boundary centroid)` } : null;
+}
+
+/**
+ * Falls back to approximating a village's location from a matched
+ * habitation's real coordinates (Habitation_Tamilnadu shapefile), tried in
+ * order until one resolves -- district_en must match (via the pre-split
+ * parent for the six newer districts) to reject a same-named habitation
+ * elsewhere in Tamil Nadu, since habitation names are not unique
+ * statewide. Returns null if no habitation matched to this village also
+ * has shapefile coordinates in the right district; the caller falls back
+ * to geocoding by name instead.
+ */
+function findHabitationGeo(db: Database, habitations: Habitation[], districtEn: string): VillageGeo | null {
   const targetDistrict = PARENT_DISTRICT[districtEn] ?? districtEn;
   for (const hab of habitations) {
     const [hit] = rowsOf<{ lat: number; lon: number; hab_name: string }>(
@@ -221,7 +241,7 @@ function findVillageGeo(db: Database, habitations: Habitation[], districtEn: str
       "SELECT lat, lon, hab_name FROM habitation_geo WHERE LOWER(hab_name) = LOWER(?) AND district_en = ? LIMIT 1",
       [hab.habitation_name, targetDistrict]
     );
-    if (hit) return { lat: hit.lat, lon: hit.lon, label: hit.hab_name };
+    if (hit) return { lat: hit.lat, lon: hit.lon, label: `Approximate location, from the habitation "${hit.hab_name}"` };
   }
   return null;
 }

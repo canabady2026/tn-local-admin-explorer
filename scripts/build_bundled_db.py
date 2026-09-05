@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Builds public/data/tndb2021.db from the source database plus the
-Habitation_Tamilnadu shapefile (via its KML export), both expected at
-~/dev/tn-local-administration/ by default.
+Builds public/data/tndb2021.db from the source database plus two
+geospatial sources, all expected at ~/dev/tn-local-administration/:
+  - Habitation_Tamilnadu/Habitation.kml   (habitation-level points)
+  - revenue_village.kml                    (revenue village polygons, ~191MB)
+village-master.csv was also evaluated (see below) but isn't used --
+it added zero additional coverage in testing.
 
 Usage: python3 scripts/build_bundled_db.py
 
@@ -16,23 +19,39 @@ What it does:
      match any habitation record at all, regardless of the free-text
      village-name match. Verified impact: 3,326 -> 4,287 villages (+29%)
      get a habitation match once applied.
-  3. Loads the habitation shapefile's ~66,918 points into a new
-     `habitation_geo` table, with each point's DISTRICT_I code resolved to
-     our district.name_en by habitation-name-set overlap against the
-     (alias-normalized) habitation table -- the shapefile predates Tamil
-     Nadu's 2019/2020 district splits, so it has 37 codes against our 38
-     districts; PARENT_DISTRICT in src/lib/sqlite.ts maps the six newer
-     districts back to their pre-split parent at query time.
-  4. VACUUMs again and writes the result to public/data/tndb2021.db.
+  3. Loads the habitation shapefile's ~66,918 points into `habitation_geo`,
+     with each point's DISTRICT_I code resolved to our district.name_en by
+     habitation-name-set overlap against the (alias-normalized) habitation
+     table -- the shapefile predates Tamil Nadu's 2019/2020 district
+     splits, so it has 37 codes against our 38 districts; PARENT_DISTRICT
+     in src/lib/sqlite.ts maps the six newer districts back to their
+     pre-split parent at query time.
+  4. Streams revenue_village.kml's ~18,516 placemarks (it's too large to
+     hold as a DOM; ET.iterparse + elem.clear() keeps memory bounded) into
+     `village_geo`: one centroid per "Village"/"Village (Uninhabitable)"
+     polygon, keyed directly by (dcode, tcode, vcode) -- verified these
+     match our own village table's codes exactly, no crosswalk needed.
+     A handful of codes appear on more than one placemark (split/exclave
+     parcels); their centroids are averaged into one row.
+  5. VACUUMs again and writes the result to public/data/tndb2021.db.
 
-The village detail drawer's map first tries to approximate a village's
-location from a matched habitation's real coordinates here, and only
-falls back to geocoding the village by name via Nominatim if that fails
-(see src/lib/osmVillage.ts) -- verified against real villages: the
-shapefile chain alone resolves ~21% of all villages (3,756/17,738),
-including some Nominatim can't (e.g. "Kathalampattu" in Vellore has no
-usable Nominatim result at all, but resolves via a matched habitation's
-shapefile coordinates).
+The village detail drawer's map resolves a location in this priority:
+  1. village_geo, direct (dcode, tcode, vcode) match -- verified coverage:
+     96.2% of all villages (17,056/17,738), and highest confidence since
+     it's a real polygon centroid for that exact village, not a name match.
+  2. habitation_geo, via a matched habitation's shapefile coordinates (see
+     step 3) -- catches some of the remaining 3.8%.
+  3. Nominatim, geocoding the village by name (src/lib/osmVillage.ts) --
+     final fallback.
+The residual gap after (1) is mostly urbanized ex-villages (Chennai
+suburbs like Adambakkam, Alandur, Nanganallur) that revenue_village.kml
+files under "Corporation"/"Municipality" boundaries instead of a "Village"
+polygon -- a centroid of an entire corporation wouldn't give an accurate
+point for one specific locality anyway, so these are left to (2) and (3)
+rather than forcing a misleading match. village-master.csv (a
+dcode/tcode/vcode <-> LGD-code crosswalk) was tested as a bridge to
+recover these via LGD codes instead; it recovered zero of the 682 gap
+villages -- they're absent from that file too -- so it isn't used.
 """
 
 import shutil
@@ -43,10 +62,14 @@ from pathlib import Path
 
 SOURCE_DIR = Path.home() / "dev" / "tn-local-administration"
 SOURCE_DB = SOURCE_DIR / "tndb2021.db"
-KML_PATH = SOURCE_DIR / "Habitation_Tamilnadu" / "Habitation.kml"
+HABITATION_KML_PATH = SOURCE_DIR / "Habitation_Tamilnadu" / "Habitation.kml"
+REVENUE_VILLAGE_KML_PATH = SOURCE_DIR / "revenue_village.kml"
 OUTPUT_DB = Path(__file__).resolve().parent.parent / "public" / "data" / "tndb2021.db"
 
 NS = {"k": "http://www.opengis.net/kml/2.2"}
+KML_NS = "{http://www.opengis.net/kml/2.2}"
+
+REVENUE_VILLAGE_TYPES = {"Village", "Village (Uninhabitable)"}
 
 # habitation.district_name spellings that don't exactly match district.name_en.
 DISTRICT_ALIASES = {
@@ -63,8 +86,8 @@ _ALIAS_CASE_SQL = "CASE LOWER(district_name) " + " ".join(
 ) + " ELSE district_name END"
 
 
-def parse_kml():
-    tree = ET.parse(KML_PATH)
+def parse_habitation_kml():
+    tree = ET.parse(HABITATION_KML_PATH)
     records = []
     for pm in tree.getroot().findall(".//k:Placemark", NS):
         data = {sd.get("name"): sd.text for sd in pm.findall(".//k:SimpleData", NS)}
@@ -118,6 +141,87 @@ def learn_district_mapping(conn, records):
     return mapping
 
 
+def _centroid_of_placemark(elem):
+    lats, lons = [], []
+    for coords_el in elem.findall(f".//{KML_NS}outerBoundaryIs/{KML_NS}LinearRing/{KML_NS}coordinates"):
+        if not coords_el.text:
+            continue
+        for pair in coords_el.text.split():
+            parts = pair.split(",")
+            if len(parts) >= 2:
+                lons.append(float(parts[0]))
+                lats.append(float(parts[1]))
+    if not lats:
+        return None
+    return sum(lats) / len(lats), sum(lons) / len(lons)
+
+
+def load_revenue_village(conn):
+    """Streams revenue_village.kml (too large to hold as a DOM) and loads
+    one centroid per Village polygon into village_geo, keyed directly by
+    (dcode, tcode, vcode)."""
+    conn.execute(
+        """
+        CREATE TABLE village_geo (
+            id INTEGER PRIMARY KEY,
+            dcode INTEGER,
+            tcode INTEGER,
+            vcode TEXT,
+            lgd_village INTEGER,
+            vill_name TEXT,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL
+        )
+        """
+    )
+
+    by_code = {}
+    count = 0
+    for _event, elem in ET.iterparse(REVENUE_VILLAGE_KML_PATH, events=("end",)):
+        if elem.tag != KML_NS + "Placemark":
+            continue
+        count += 1
+        data = {sd.get("name"): sd.text for sd in elem.findall(f".//{KML_NS}SimpleData")}
+        if data.get("type") in REVENUE_VILLAGE_TYPES:
+            centroid = _centroid_of_placemark(elem)
+            if centroid and data.get("district_c") and data.get("taluk_code") and data.get("village_co"):
+                key = (int(float(data["district_c"])), int(float(data["taluk_code"])), data["village_co"])
+                by_code.setdefault(key, []).append(
+                    (
+                        int(float(data["lgd_villag"])) if data.get("lgd_villag") else None,
+                        data.get("vill_name"),
+                        centroid[0],
+                        centroid[1],
+                    )
+                )
+        elem.clear()
+        if count % 5000 == 0:
+            print(f"  ...{count} revenue_village placemarks streamed")
+
+    rows = []
+    for (dcode, tcode, vcode), entries in by_code.items():
+        lgd_village, vill_name, _, _ = entries[0]
+        avg_lat = sum(e[2] for e in entries) / len(entries)
+        avg_lon = sum(e[3] for e in entries) / len(entries)
+        rows.append((dcode, tcode, vcode, lgd_village, vill_name, avg_lat, avg_lon))
+
+    conn.executemany(
+        "INSERT INTO village_geo (dcode, tcode, vcode, lgd_village, vill_name, lat, lon) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.execute("CREATE UNIQUE INDEX idx_village_geo_code ON village_geo(dcode, tcode, vcode)")
+    conn.commit()
+
+    total = conn.execute("SELECT COUNT(*) FROM village").fetchone()[0]
+    matched = conn.execute(
+        """
+        SELECT COUNT(*) FROM village v
+        JOIN village_geo vg ON vg.dcode = v.dcode AND vg.tcode = v.tcode AND vg.vcode = v.vcode
+        """
+    ).fetchone()[0]
+    print(f"village_geo: {len(rows)} rows from {count} placemarks; direct match coverage {matched}/{total} ({100*matched/total:.1f}%)")
+
+
 def main():
     print(f"copying {SOURCE_DB} -> {OUTPUT_DB}")
     OUTPUT_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +231,7 @@ def main():
     conn.execute("VACUUM")
     conn.execute("CREATE INDEX idx_habitation_lookup ON habitation(LOWER(district_name), LOWER(village_name))")
 
-    records = parse_kml()
+    records = parse_habitation_kml()
     print(f"parsed {len(records)} habitation placemarks from the shapefile's KML export")
 
     mapping = learn_district_mapping(conn, records)
@@ -166,6 +270,9 @@ def main():
     total = conn.execute("SELECT COUNT(*) FROM habitation_geo").fetchone()[0]
     mapped = conn.execute("SELECT COUNT(*) FROM habitation_geo WHERE district_en IS NOT NULL").fetchone()[0]
     print(f"inserted {total} habitation_geo rows, {mapped} with a resolved district_en ({100*mapped/total:.1f}%)")
+
+    print("streaming revenue_village.kml (this is a ~191MB file, may take a minute)...")
+    load_revenue_village(conn)
 
     conn.execute("VACUUM")
     conn.close()

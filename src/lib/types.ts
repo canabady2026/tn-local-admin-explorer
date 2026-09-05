@@ -1,5 +1,7 @@
 export interface VillageRow {
   village_id: number;
+  dcode: number;
+  tcode: number;
   vcode: string;
   district_en: string;
   district_ta: string;
