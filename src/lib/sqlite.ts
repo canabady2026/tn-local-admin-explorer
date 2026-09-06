@@ -9,8 +9,10 @@ import type {
   Taluk,
   VillageDetail,
   VillageGeo,
+  VillageMapPoint,
   VillageRow,
   VillagesFilters,
+  VillagesForMapResult,
   VillagesResult,
 } from "./types";
 
@@ -257,7 +259,11 @@ function findVillageGeoDirect(db: Database, village: VillageRow): VillageGeo | n
  * has shapefile coordinates in the right district; the caller falls back
  * to geocoding by name instead.
  */
-function findHabitationGeo(db: Database, habitations: Habitation[], districtEn: string): VillageGeo | null {
+function findHabitationGeo(
+  db: Database,
+  habitations: Array<{ habitation_name: string }>,
+  districtEn: string
+): VillageGeo | null {
   const targetDistrict = PARENT_DISTRICT[districtEn] ?? districtEn;
   for (const hab of habitations) {
     const [hit] = rowsOf<{ lat: number; lon: number; hab_name: string }>(
@@ -268,6 +274,62 @@ function findHabitationGeo(db: Database, habitations: Habitation[], districtEn: 
     if (hit) return { lat: hit.lat, lon: hit.lon, label: `Approximate location, from the habitation "${hit.hab_name}"` };
   }
   return null;
+}
+
+// Local-only lookups (village_geo/habitation_geo are both plain sqlite
+// queries against the bundled db), so unlike the highways app's Overpass
+// links, plotting many villages at once needs no rate-limit-conscious
+// cap on external requests -- Nominatim is skipped entirely here rather
+// than capped, since firing it in a loop for a big result set would be
+// the one part of this that *does* hit an external, rate-limited service.
+export const RESULTS_MAP_LIMIT = 300;
+
+export async function getVillagesForMap(filters: VillagesFilters): Promise<VillagesForMapResult> {
+  const db = await loadDb();
+  const { sql: whereSql, params } = buildWhere(filters);
+
+  const [{ values }] = db.exec(`SELECT COUNT(*) ${VILLAGE_JOIN} ${whereSql}`, params);
+  const totalMatched = Number(values[0][0]);
+
+  const villages = rowsOf<VillageRow>(
+    db,
+    `${VILLAGE_SELECT} ${whereSql} ORDER BY ${sortExpr(filters.sort)} LIMIT ?`,
+    [...params, RESULTS_MAP_LIMIT]
+  );
+
+  const points: VillageMapPoint[] = [];
+  for (const village of villages) {
+    const direct = findVillageGeoDirect(db, village);
+    if (direct) {
+      points.push({
+        village_id: village.village_id,
+        village_en: village.village_en,
+        village_ta: village.village_ta,
+        lat: direct.lat,
+        lon: direct.lon,
+        polygon: direct.polygon,
+      });
+      continue;
+    }
+    const habitations = rowsOf<{ habitation_name: string }>(
+      db,
+      `SELECT habitation_name FROM habitation
+       WHERE LOWER(village_name) = LOWER(?) AND LOWER(${DISTRICT_ALIAS_CASE_SQL}) = LOWER(?)`,
+      [village.village_en, village.district_en]
+    );
+    const viaHabitation = findHabitationGeo(db, habitations, village.district_en);
+    if (viaHabitation) {
+      points.push({
+        village_id: village.village_id,
+        village_en: village.village_en,
+        village_ta: village.village_ta,
+        lat: viaHabitation.lat,
+        lon: viaHabitation.lon,
+      });
+    }
+  }
+
+  return { points, totalMatched };
 }
 
 export async function getDistricts(): Promise<District[]> {

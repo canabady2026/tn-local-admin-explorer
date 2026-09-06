@@ -113,3 +113,17 @@ export interface LocationSelection {
   district: string;
   taluk?: string;
 }
+
+export interface VillageMapPoint {
+  village_id: number;
+  village_en: string;
+  village_ta: string;
+  lat: number;
+  lon: number;
+  polygon?: [number, number][][];
+}
+
+export interface VillagesForMapResult {
+  points: VillageMapPoint[];
+  totalMatched: number;
+}

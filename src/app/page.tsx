@@ -6,13 +6,14 @@ import { DbStatusBadge } from "@/components/DbStatusBadge";
 import { FilterPanel } from "@/components/FilterPanel";
 import { FilterSummary } from "@/components/FilterSummary";
 import { FontControls } from "@/components/FontControls";
+import { FullPageResultsMap } from "@/components/FullPageResultsMap";
 import { FullPageVillageMap } from "@/components/FullPageVillageMap";
 import { KpiCards } from "@/components/KpiCards";
 import { Pagination } from "@/components/Pagination";
 import { VillageDetailDrawer } from "@/components/VillageDetailDrawer";
 import { VillagesTable } from "@/components/VillagesTable";
 import { filtersForLocation } from "@/lib/filters";
-import { parseRoute } from "@/lib/mapLinks";
+import { buildVillagesResultsMapUrl, parseRoute } from "@/lib/mapLinks";
 import { getOverallStats, queryVillages } from "@/lib/sqlite";
 import { EMPTY_FILTERS, type VillagesFilters } from "@/lib/types";
 import { useDebounced } from "@/lib/useDebounced";
@@ -71,6 +72,17 @@ function Dashboard() {
 
       <KpiCards kpis={kpis ?? []} loading={kpisLoading} />
 
+      <div className="flex justify-end">
+        <a
+          href={buildVillagesResultsMapUrl(filters)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-blue-600 underline decoration-dotted hover:text-blue-800"
+        >
+          View matching villages on map ↗
+        </a>
+      </div>
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[260px_1fr]">
         <FilterPanel filters={filters} onChange={setFilters} />
 
@@ -119,5 +131,6 @@ export default function Home() {
 
   if (!route) return null;
   if (route.mode === "village-map") return <FullPageVillageMap villageId={route.villageId} />;
+  if (route.mode === "results-map") return <FullPageResultsMap filters={route.filters} />;
   return <Dashboard />;
 }
