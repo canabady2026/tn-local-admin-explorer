@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
 import "leaflet/dist/leaflet.css";
 import { withBasePath } from "@/lib/basePath";
+import { buildVillageLabelHtml } from "@/lib/mapLabel";
 import { GeocodeUnavailableError, geocodeVillage } from "@/lib/osmVillage";
 import type { VillageGeo } from "@/lib/types";
 
@@ -80,17 +81,13 @@ export function VillageMap({ villageEn, villageTa, talukEn, districtEn, geo, ful
         maxZoom: 18,
       }).addTo(map);
 
-      // Leaflet's popup content is rendered as HTML, not plain text, so
-      // every dynamic value has to be escaped -- otherwise a name
-      // containing "&"/"<"/">" would break the markup.
-      const escapeHtml = (text: string) =>
-        text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const popupHtml = `
-        <div style="font-size:1.2em;font-weight:700;line-height:1.3;">${escapeHtml(villageTa)}</div>
-        <div style="font-size:0.95em;">${escapeHtml(villageEn)}</div>
-        <div style="font-size:0.8em;color:#64748b;margin-top:2px;">${escapeHtml(talukEn)}, ${escapeHtml(districtEn)}</div>
-        <div style="font-size:0.75em;color:#94a3b8;margin-top:2px;">${escapeHtml(resolved.description)}</div>
-      `;
+      const popupHtml = buildVillageLabelHtml({
+        villageTa,
+        villageEn,
+        talukEn,
+        districtEn,
+        description: resolved.description,
+      });
 
       L.marker([resolved.lat, resolved.lon]).addTo(map).bindPopup(popupHtml);
 

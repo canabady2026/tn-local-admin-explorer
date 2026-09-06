@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import useSWR from "swr";
 import "leaflet/dist/leaflet.css";
 import { withBasePath } from "@/lib/basePath";
+import { buildVillageLabelHtml } from "@/lib/mapLabel";
 import { getVillagesForMap, RESULTS_MAP_LIMIT } from "@/lib/sqlite";
 import type { VillagesFilters } from "@/lib/types";
 
@@ -36,16 +37,22 @@ export function FullPageResultsMap({ filters }: { filters: VillagesFilters }) {
         maxZoom: 18,
       }).addTo(map);
 
-      const layers: Layer[] = data.points.map((p) =>
-        p.polygon
-          ? L.polygon(p.polygon, { color: "#1d4ed8", weight: 2, fillOpacity: 0.08 }).bindTooltip(p.village_en)
+      const layers: Layer[] = data.points.map((p) => {
+        const label = buildVillageLabelHtml({
+          villageTa: p.village_ta,
+          villageEn: p.village_en,
+          talukEn: p.taluk_en,
+          districtEn: p.district_en,
+        });
+        return p.polygon
+          ? L.polygon(p.polygon, { color: "#1d4ed8", weight: 2, fillOpacity: 0.08 }).bindTooltip(label)
           : L.circleMarker([p.lat, p.lon], {
               radius: 5,
               color: "#1d4ed8",
               fillColor: "#1d4ed8",
               fillOpacity: 0.8,
-            }).bindTooltip(p.village_en)
-      );
+            }).bindTooltip(label);
+      });
 
       const group: FeatureGroup = L.featureGroup(layers).addTo(map);
       map.fitBounds(group.getBounds(), { padding: [24, 24] });

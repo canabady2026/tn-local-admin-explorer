@@ -305,6 +305,8 @@ export async function getVillagesForMap(filters: VillagesFilters): Promise<Villa
         village_id: village.village_id,
         village_en: village.village_en,
         village_ta: village.village_ta,
+        taluk_en: village.taluk_en,
+        district_en: village.district_en,
         lat: direct.lat,
         lon: direct.lon,
         polygon: direct.polygon,
@@ -323,6 +325,8 @@ export async function getVillagesForMap(filters: VillagesFilters): Promise<Villa
         village_id: village.village_id,
         village_en: village.village_en,
         village_ta: village.village_ta,
+        taluk_en: village.taluk_en,
+        district_en: village.district_en,
         lat: viaHabitation.lat,
         lon: viaHabitation.lon,
       });

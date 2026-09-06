@@ -118,6 +118,8 @@ export interface VillageMapPoint {
   village_id: number;
   village_en: string;
   village_ta: string;
+  taluk_en: string;
+  district_en: string;
   lat: number;
   lon: number;
   polygon?: [number, number][][];
