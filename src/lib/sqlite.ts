@@ -221,13 +221,30 @@ export async function getVillageDetail(villageId: number): Promise<VillageDetail
  * residual gap is mostly urbanized ex-villages the shapefile files under
  * a Corporation/Municipality boundary instead of a Village polygon.
  */
+/** "lat,lon;lat,lon|lat,lon;..." (rings separated by "|", points by ";") -> rings of [lat, lon]. */
+function parsePolygon(text: string | null): [number, number][][] | undefined {
+  if (!text) return undefined;
+  const rings = text
+    .split("|")
+    .map((ring) =>
+      ring
+        .split(";")
+        .map((pt) => pt.split(",").map(Number) as [number, number])
+        .filter(([lat, lon]) => Number.isFinite(lat) && Number.isFinite(lon))
+    )
+    .filter((ring) => ring.length >= 3);
+  return rings.length > 0 ? rings : undefined;
+}
+
 function findVillageGeoDirect(db: Database, village: VillageRow): VillageGeo | null {
-  const [hit] = rowsOf<{ lat: number; lon: number; vill_name: string }>(
+  const [hit] = rowsOf<{ lat: number; lon: number; vill_name: string; polygon: string | null }>(
     db,
-    "SELECT lat, lon, vill_name FROM village_geo WHERE dcode = ? AND tcode = ? AND vcode = ?",
+    "SELECT lat, lon, vill_name, polygon FROM village_geo WHERE dcode = ? AND tcode = ? AND vcode = ?",
     [village.dcode, village.tcode, village.vcode]
   );
-  return hit ? { lat: hit.lat, lon: hit.lon, label: "Village boundary centroid" } : null;
+  return hit
+    ? { lat: hit.lat, lon: hit.lon, label: "Village boundary centroid", polygon: parsePolygon(hit.polygon) }
+    : null;
 }
 
 /**

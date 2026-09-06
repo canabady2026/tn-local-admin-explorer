@@ -80,6 +80,8 @@ export function VillageDetailDrawer({ villageId, onClose, onNavigateToLocation }
             <div className="mb-5">
               <VillageMap
                 villageEn={detail.village.village_en}
+                villageTa={detail.village.village_ta}
+                talukEn={detail.village.taluk_en}
                 districtEn={detail.village.district_en}
                 geo={detail.geo}
               />

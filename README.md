@@ -15,7 +15,7 @@ points and ~17,318 revenue village boundary centroids from two
 shapefiles, and a small "notable people" table) is queried entirely in
 the browser via [sql.js](https://sql.js.org) (SQLite compiled to
 WebAssembly) against a bundled copy of the source database
-(`public/data/tndb2021.db`, ~24MB, built by `scripts/build_bundled_db.py`
+(`public/data/tndb2021.db`, ~41MB, built by `scripts/build_bundled_db.py`
 -- see below). No API, no server, no health checks -- just static files.
 
 ## Project layout
@@ -58,7 +58,7 @@ Source: `~/dev/tn-local-administration/tndb2021.db`. Four real tables:
 | `habitation` | 80,359 | Rural drinking-water coverage records (circa 2012), keyed by **free-text** `district_name`/`block_name`/`panchayat_name`/`village_name`/`habitation_name` -- no foreign key to `village` |
 | `speciality` | 12 | Notable people, properly linked via `village_id` -- very sparse (only "cinema_personality" entries currently) |
 | `habitation_geo` | 66,918 | **Added by this project**, from `~/dev/tn-local-administration/Habitation_Tamilnadu/Habitation.shp` (via its KML export) -- real lat/lon per habitation point, plus a learned `district_en` (see below) |
-| `village_geo` | 17,318 | **Added by this project**, from `~/dev/tn-local-administration/revenue_village.kml` -- one centroid per revenue village polygon, keyed directly by `(dcode, tcode, vcode)` (see below) |
+| `village_geo` | 17,318 | **Added by this project**, from `~/dev/tn-local-administration/revenue_village.kml` -- one centroid *and* simplified boundary polygon per revenue village, keyed directly by `(dcode, tcode, vcode)` (see below) |
 
 **Habitation matching is best-effort.** Since `habitation` has no ID
 linking it to `village`, the detail drawer matches on
@@ -88,10 +88,16 @@ confident:**
    ~18,516 placemarks (it's a 191MB file, too large to hold as a DOM;
    `ET.iterparse` + `elem.clear()` keeps memory bounded), keeps the
    17,322 typed `"Village"`/`"Village (Uninhabitable)"` polygons, and
-   averages each one's outer-boundary coordinates into a centroid.
-   **Verified coverage: 96.2% of all villages (17,056/17,738)** --
-   easily the biggest single improvement, since it's a real boundary
-   centroid for that exact village rather than a name-based proxy.
+   stores both a centroid (average of every ring's points) and the
+   boundary itself, simplified with a pure-Python Ramer-Douglas-Peucker
+   implementation at a ~44m tolerance -- tested against a 200-village
+   sample: shrinks the average 252-vertex outline to ~32 vertices (adds
+   ~16MB total) while keeping the shape recognizable at village-viewing
+   zoom levels. The map draws this boundary as a thick blue polygon and
+   fits the view to it; the fallback stages below only ever give a point,
+   no boundary. **Verified coverage: 96.2% of all villages
+   (17,056/17,738)** -- easily the biggest single improvement, since it's
+   a real boundary for that exact village rather than a name-based proxy.
 2. **`habitation_geo`, via a matched habitation** (see above) -- catches
    some of the remaining 3.8%, ~21% of all villages on its own where it
    overlaps.

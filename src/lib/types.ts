@@ -84,6 +84,8 @@ export interface VillageGeo {
   lon: number;
   /** Which matched habitation this location came from, for attribution in the UI. */
   label: string;
+  /** The village's real boundary, as one or more rings of [lat, lon] points -- only present when resolved via village_geo (a direct village-boundary match), not the habitation/Nominatim fallbacks. */
+  polygon?: [number, number][][];
 }
 
 export interface VillageDetail {

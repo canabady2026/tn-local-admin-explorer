@@ -12,13 +12,15 @@ let iconsConfigured = false;
 
 interface Props {
   villageEn: string;
+  villageTa: string;
+  talukEn: string;
   districtEn: string;
   /** Pre-resolved location from the habitation shapefile, if any -- skips the Nominatim lookup entirely when present. */
   geo: VillageGeo | null;
   fullHeight?: boolean;
 }
 
-export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: Props) {
+export function VillageMap({ villageEn, villageTa, talukEn, districtEn, geo, fullHeight = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const heightClass = fullHeight ? "h-full" : "h-56";
@@ -35,8 +37,9 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
   );
 
   const resolved = useMemo(() => {
-    if (geo) return { lat: geo.lat, lon: geo.lon, description: geo.label };
-    if (fallback) return { lat: fallback.lat, lon: fallback.lon, description: fallback.displayName };
+    if (geo) return { lat: geo.lat, lon: geo.lon, description: geo.label, polygon: geo.polygon };
+    if (fallback)
+      return { lat: fallback.lat, lon: fallback.lon, description: fallback.displayName, polygon: undefined };
     return null;
   }, [geo, fallback]);
 
@@ -78,13 +81,29 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
       }).addTo(map);
 
       // Leaflet's popup content is rendered as HTML, not plain text, so
-      // the village name has to be escaped before wrapping it in <b> --
-      // otherwise a name containing "&"/"<"/">" would break the markup.
+      // every dynamic value has to be escaped -- otherwise a name
+      // containing "&"/"<"/">" would break the markup.
       const escapeHtml = (text: string) =>
         text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const popupHtml = `<b>${escapeHtml(villageEn)}</b><br>${escapeHtml(resolved.description)}`;
+      const popupHtml = `
+        <div style="font-size:1.2em;font-weight:700;line-height:1.3;">${escapeHtml(villageTa)}</div>
+        <div style="font-size:0.95em;">${escapeHtml(villageEn)}</div>
+        <div style="font-size:0.8em;color:#64748b;margin-top:2px;">${escapeHtml(talukEn)}, ${escapeHtml(districtEn)}</div>
+        <div style="font-size:0.75em;color:#94a3b8;margin-top:2px;">${escapeHtml(resolved.description)}</div>
+      `;
 
       L.marker([resolved.lat, resolved.lon]).addTo(map).bindPopup(popupHtml);
+
+      // The village's real boundary, when resolved via village_geo --
+      // habitation/Nominatim fallbacks only ever give a point, no polygon.
+      if (resolved.polygon && resolved.polygon.length > 0) {
+        const polygon = L.polygon(resolved.polygon, {
+          color: "#1d4ed8",
+          weight: 4,
+          fillOpacity: 0.08,
+        }).addTo(map);
+        map.fitBounds(polygon.getBounds(), { padding: [16, 16] });
+      }
     })();
 
     return () => {
@@ -92,7 +111,7 @@ export function VillageMap({ villageEn, districtEn, geo, fullHeight = false }: P
       mapRef.current?.remove();
       mapRef.current = null;
     };
-  }, [resolved, fullHeight, villageEn]);
+  }, [resolved, fullHeight, villageEn, villageTa, talukEn, districtEn]);
 
   if (geo) {
     // Resolved from the bundled shapefile -- no loading/error state to show.

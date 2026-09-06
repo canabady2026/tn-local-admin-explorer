@@ -141,25 +141,75 @@ def learn_district_mapping(conn, records):
     return mapping
 
 
-def _centroid_of_placemark(elem):
-    lats, lons = [], []
+def _rings_of_placemark(elem):
+    """Each outer boundary ring as a list of (lat, lon) points."""
+    rings = []
     for coords_el in elem.findall(f".//{KML_NS}outerBoundaryIs/{KML_NS}LinearRing/{KML_NS}coordinates"):
         if not coords_el.text:
             continue
+        ring = []
         for pair in coords_el.text.split():
             parts = pair.split(",")
             if len(parts) >= 2:
-                lons.append(float(parts[0]))
-                lats.append(float(parts[1]))
+                ring.append((float(parts[1]), float(parts[0])))  # (lat, lon)
+        if ring:
+            rings.append(ring)
+    return rings
+
+
+def _centroid_of_rings(rings):
+    lats = [lat for ring in rings for lat, _lon in ring]
+    lons = [lon for ring in rings for _lat, lon in ring]
     if not lats:
         return None
     return sum(lats) / len(lats), sum(lons) / len(lons)
 
 
+# ~44m tolerance at Tamil Nadu's latitude -- verified against real polygons
+# (200-village sample): shrinks the average 252-vertex village outline to
+# ~32 vertices while keeping the shape recognizable at village-viewing
+# zoom levels, which is what keeps village_geo's size in the tens of MB
+# instead of the 191MB the raw shapefile would need.
+POLYGON_SIMPLIFY_TOLERANCE_DEG = 0.0004
+
+
+def _rdp(points, epsilon):
+    """Ramer-Douglas-Peucker polyline simplification (no external deps)."""
+    if len(points) < 3:
+        return points
+    (x1, y1), (x2, y2) = points[0], points[-1]
+    dx, dy = x2 - x1, y2 - y1
+    norm = (dx * dx + dy * dy) ** 0.5
+    dmax, idx = 0.0, 0
+    for i in range(1, len(points) - 1):
+        px, py = points[i]
+        if norm == 0:
+            d = ((px - x1) ** 2 + (py - y1) ** 2) ** 0.5
+        else:
+            d = abs(dy * px - dx * py + x2 * y1 - y2 * x1) / norm
+        if d > dmax:
+            dmax, idx = d, i
+    if dmax > epsilon:
+        left = _rdp(points[: idx + 1], epsilon)
+        right = _rdp(points[idx:], epsilon)
+        return left[:-1] + right
+    return [points[0], points[-1]]
+
+
+def _encode_rings(rings):
+    """rings -> "lat,lon;lat,lon|lat,lon;..." (rings separated by '|', points by ';'),
+    simplified and rounded to 5 decimals (~1m) -- plenty relative to the
+    ~44m simplification tolerance already applied."""
+    simplified = [_rdp(ring, POLYGON_SIMPLIFY_TOLERANCE_DEG) for ring in rings]
+    return "|".join(
+        ";".join(f"{lat:.5f},{lon:.5f}" for lat, lon in ring) for ring in simplified if len(ring) >= 3
+    )
+
+
 def load_revenue_village(conn):
     """Streams revenue_village.kml (too large to hold as a DOM) and loads
-    one centroid per Village polygon into village_geo, keyed directly by
-    (dcode, tcode, vcode)."""
+    one centroid + simplified boundary per Village polygon into
+    village_geo, keyed directly by (dcode, tcode, vcode)."""
     conn.execute(
         """
         CREATE TABLE village_geo (
@@ -170,7 +220,8 @@ def load_revenue_village(conn):
             lgd_village INTEGER,
             vill_name TEXT,
             lat REAL NOT NULL,
-            lon REAL NOT NULL
+            lon REAL NOT NULL,
+            polygon TEXT
         )
         """
     )
@@ -183,7 +234,8 @@ def load_revenue_village(conn):
         count += 1
         data = {sd.get("name"): sd.text for sd in elem.findall(f".//{KML_NS}SimpleData")}
         if data.get("type") in REVENUE_VILLAGE_TYPES:
-            centroid = _centroid_of_placemark(elem)
+            rings = _rings_of_placemark(elem)
+            centroid = _centroid_of_rings(rings)
             if centroid and data.get("district_c") and data.get("taluk_code") and data.get("village_co"):
                 key = (int(float(data["district_c"])), int(float(data["taluk_code"])), data["village_co"])
                 by_code.setdefault(key, []).append(
@@ -192,6 +244,7 @@ def load_revenue_village(conn):
                         data.get("vill_name"),
                         centroid[0],
                         centroid[1],
+                        rings,
                     )
                 )
         elem.clear()
@@ -200,13 +253,18 @@ def load_revenue_village(conn):
 
     rows = []
     for (dcode, tcode, vcode), entries in by_code.items():
-        lgd_village, vill_name, _, _ = entries[0]
+        lgd_village, vill_name, _, _, _ = entries[0]
         avg_lat = sum(e[2] for e in entries) / len(entries)
         avg_lon = sum(e[3] for e in entries) / len(entries)
-        rows.append((dcode, tcode, vcode, lgd_village, vill_name, avg_lat, avg_lon))
+        # A handful of codes have more than one placemark (split/exclave
+        # parcels) -- combine every ring from every one of them.
+        all_rings = [ring for e in entries for ring in e[4]]
+        polygon_text = _encode_rings(all_rings)
+        rows.append((dcode, tcode, vcode, lgd_village, vill_name, avg_lat, avg_lon, polygon_text))
 
     conn.executemany(
-        "INSERT INTO village_geo (dcode, tcode, vcode, lgd_village, vill_name, lat, lon) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO village_geo (dcode, tcode, vcode, lgd_village, vill_name, lat, lon, polygon) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.execute("CREATE UNIQUE INDEX idx_village_geo_code ON village_geo(dcode, tcode, vcode)")

@@ -32,7 +32,14 @@ export function FullPageVillageMap({ villageId }: { villageId: number }) {
         )}
         {!isLoading && !detail && <p className="p-4 text-sm text-slate-500">Village not found.</p>}
         {!isLoading && detail && (
-          <VillageMap villageEn={detail.village.village_en} districtEn={detail.village.district_en} geo={detail.geo} fullHeight />
+          <VillageMap
+            villageEn={detail.village.village_en}
+            villageTa={detail.village.village_ta}
+            talukEn={detail.village.taluk_en}
+            districtEn={detail.village.district_en}
+            geo={detail.geo}
+            fullHeight
+          />
         )}
       </div>
     </div>
